@@ -5341,6 +5341,7 @@ local _ = (function()
         pcall(function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end)
     end
 
+local _hopBL = {}
     SV.Hop = function()
         DBG("server hop")
         pcall(function()
@@ -5348,15 +5349,26 @@ local _ = (function()
                 "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
             ))
             if data and data.data then
+                local cands = {}
                 for _, s in ipairs(data.data) do
-                    if s.id ~= game.JobId and s.playing < s.maxPlayers then
-                        TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, LocalPlayer)
-                        return
+                    local pc = tonumber(s.playing) or 0
+                    local mx = tonumber(s.maxPlayers) or 100
+                    if type(s.id) == "string" and s.id ~= game.JobId
+                        and pc < mx and not _hopBL[s.id] then
+                        table.insert(cands, { id = s.id, pc = pc })
                     end
+                end
+                table.sort(cands, function(a, b) return a.pc < b.pc end)
+                for _, c in ipairs(cands) do
+                    local ok = pcall(function()
+                        TeleportService:TeleportToPlaceInstance(game.PlaceId, c.id, LocalPlayer)
+                    end)
+                    if ok then return else _hopBL[c.id] = os.time() end
                 end
             end
         end)
     end
+
 
     task.spawn(function()
         while gui.Parent do
@@ -7297,7 +7309,7 @@ Label(f2, "MEGA = saniyede 318 tam tur")
     end)
 
     -- ---------------- OTOMASYONLAR ----------------
-    local AUT = { conns = {}, lastFetch = 0, busy = false, nextHopAt = 0, lastRetry = 0, rows = {} }
+    local AUT = { conns = {}, lastFetch = 0, busy = false, nextHopAt = 0, lastRetry = 0, rows = {}, blacklist = {}, pendingMode = nil }
     _G.NOXAUi.Automations = AUT
 
     local function FetchServers(sortOrder, limit)
@@ -7313,14 +7325,21 @@ Label(f2, "MEGA = saniyede 318 tam tur")
         return nil
     end
 
-    local function JoinServerId(id)
+    local function JoinServerId(id, mode)
         if type(id) ~= "string" or id == "" or AUT.busy then return false end
+        if AUT.blacklist[id] then return false end
         AUT.busy = true
+        AUT.pendingMode = mode or "Rastgele"
         pcall(Save)
-        pcall(function()
+        local ok = pcall(function()
             TeleportService:TeleportToPlaceInstance(game.PlaceId, id, LocalPlayer)
         end)
-        task.delay(6, function() AUT.busy = false end)
+        if not ok then
+            AUT.blacklist[id] = os.time()
+            AUT.busy = false
+            return false
+        end
+        task.delay(8, function() AUT.busy = false end)
         return true
     end
 
@@ -7335,12 +7354,14 @@ Label(f2, "MEGA = saniyede 318 tam tur")
         for _, s in ipairs(list) do
             local pc = tonumber(s.playerCount or s.playing) or 0
             local mx = tonumber(s.maxPlayers or s.capacity) or 100
-            if type(s.id) == "string" and s.id ~= game.JobId and pc < mx then
-                table.insert(cands, { id = s.id, pc = pc })
+            local sid = s.id
+            if type(sid) == "string" and sid ~= game.JobId
+                and pc < mx and not AUT.blacklist[sid] then
+                table.insert(cands, { id = sid, pc = pc })
             end
         end
         if #cands == 0 then
-            AddNotif("Otomasyonlar", "uygun sunucu bulunamadı", 5)
+            AddNotif("Otomasyonlar", "uygun sunucu yok (hepsi kısıtlı/blacklist)", 5)
             return false
         end
         local pick
@@ -7354,7 +7375,12 @@ Label(f2, "MEGA = saniyede 318 tam tur")
             pick = cands[1]
         end
         AddNotif("Otomasyonlar", mode .. " → " .. pick.pc .. " kişilik sunucuya atlanıyor", 5)
-        return JoinServerId(pick.id)
+        local ok = JoinServerId(pick.id, mode)
+        if not ok then
+            AUT.blacklist[pick.id] = os.time()
+            task.delay(1, function() if gui.Parent and not AUT.busy then HopByMode(mode) end end)
+        end
+        return ok
     end
 
     local function ManualHop(mode)
@@ -7422,14 +7448,19 @@ Label(f2, "MEGA = saniyede 318 tam tur")
         end
     end)
 
-    table.insert(AUT.conns, TeleportService.TeleportInitFailed:Connect(function(plr)
-        if plr ~= LocalPlayer or not CFG.AutoRetryTeleport then return end
-        if os.time() - AUT.lastRetry < 30 then return end
+    table.insert(AUT.conns, TeleportService.TeleportInitFailed:Connect(function(plr, result, msg)
+        if plr ~= LocalPlayer then return end
+        if result == Enum.TeleportResult.Flush or result == Enum.TeleportResult.GameEnded then return end
+        AUT.busy = false
+        if AUT.pendingMode then
+            AddNotif("Otomasyonlar", "kısıtlı sunucu — farklı sunucu deneniyor", 5)
+        end
+        if not CFG.AutoRetryTeleport then return end
+        if os.time() - AUT.lastRetry < 5 then return end
         AUT.lastRetry = os.time()
-        AddNotif("Otomasyonlar", "ışınlanma hatası — tekrar deneniyor", 5)
-        task.delay(2.5, function()
-            if gui.Parent then
-                pcall(function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end)
+        task.delay(2, function()
+            if gui.Parent and not AUT.busy then
+                HopByMode(AUT.pendingMode or CFG.AutoHopMode or "En Az Oyuncu")
             end
         end)
     end))
