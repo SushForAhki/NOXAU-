@@ -7568,6 +7568,104 @@ Label(f2, "MEGA = saniyede 318 tam tur")
     end)
     MakeSpInfo(au4, "Oto Yeniden Bağlan ve AFK Engeli: Araçlar sekmesinde. Sunucu azalınca hop: Araçlar → Otomatik Hop.")
 
+    -- ============================================================
+    -- ARKADAŞIN SUNUCUSUNA IŞINLANMA
+    -- ============================================================
+    local function GetUserIdByName(name)
+        local ok, res = pcall(function()
+            return HttpSvc:JSONDecode(game:HttpGet(
+                "https://api.roblox.com/users/get-by-username?username=" .. tostring(name)
+            ))
+        end)
+        if ok and res and res.Id then return res.Id end
+        local ok2, res2 = pcall(function()
+            return HttpSvc:JSONDecode(game:HttpPost(
+                "https://users.roblox.com/v1/usernames/users",
+                HttpSvc:JSONEncode({ usernames = { tostring(name) }, excludeBannedUsers = true }),
+                "application/json"
+            ))
+        end)
+        if ok2 and res2 and res2.data and res2.data[1] and res2.data[1].id then
+            return res2.data[1].id
+        end
+        return nil
+    end
+
+    local function GetPresence(userId)
+        local ok, res = pcall(function()
+            return HttpSvc:JSONDecode(game:HttpPost(
+                "https://presence.roblox.com/v1/presence/users",
+                HttpSvc:JSONEncode({ userIds = { userId } }),
+                "application/json"
+            ))
+        end)
+        if ok and res and res.userPresences and res.userPresences[1] then
+            return res.userPresences[1]
+        end
+        return nil
+    end
+
+    local function FollowPlayerToServer(name)
+        if type(name) ~= "string" or name == "" then
+            return false, "isim bos"
+        end
+        local userId = GetUserIdByName(name)
+        if not userId then
+            return false, "kullanici bulunamadi: " .. name
+        end
+        local pres = GetPresence(userId)
+        if not pres then
+            return false, "presence alinamadi (gizli olabilir)"
+        end
+        if pres.userPresenceType ~= 3 then
+            local types = { "Offline", "Online", "InGame", "InStudio" }
+            return false, "oyuncu oyunda degil (durum: " .. (types[pres.userPresenceType + 1] or "?") .. ")"
+        end
+        local placeId = tonumber(pres.placeId)
+        local gameId = pres.gameId
+        if not placeId or placeId <= 0 or type(gameId) ~= "string" or gameId == "" then
+            return false, "sunucu bilgisi alinamadi (ozel sunucu olabilir)"
+        end
+        if placeId == game.PlaceId and gameId == game.JobId then
+            return false, "zaten ayni sunucudasin"
+        end
+        local ok = pcall(function()
+            TeleportService:TeleportToPlaceInstance(placeId, gameId, LocalPlayer)
+        end)
+        if ok then
+            return true, name .. " → " .. (pres.lastLocation or "oyun") .. " (sunucuya isinlaniyor)"
+        else
+            return false, "isinlanma reddedildi (kisitli sunucu)"
+        end
+    end
+
+    local au5 = Section(otm, "Arkadasin Sunucusuna Git")
+    local followInput = Input(au5, "kullanıcı adı (Enter = ışınlan)", "", function() end)
+    followInput.FocusLost:Connect(function(enter)
+        if not enter then return end
+        local name = string.match(followInput.Text or "", "^%s*(.-)%s*$")
+        if name == "" then return end
+        local ok, msg = FollowPlayerToServer(name)
+        AddNotif("Takip", msg, 5)
+        if _G.NOXAUi.Toast then
+            _G.NOXAUi.Toast("Takip", msg, 5)
+        end
+    end)
+    Button(au5, "O Oyuncunun Sunucusuna Işınlan", function()
+        local name = string.match(followInput.Text or "", "^%s*(.-)%s*$")
+        if name == "" then
+            AddNotif("Takip", "once isim gir", 4)
+            return
+        end
+        local ok, msg = FollowPlayerToServer(name)
+        AddNotif("Takip", msg, 5)
+        if _G.NOXAUi.Toast then
+            _G.NOXAUi.Toast("Takip", msg, 5)
+        end
+    end)
+    MakeSpInfo(au5, "Roblox API kisitlamasi: sadece arkadas listendeki veya presence'i acik kisiler icin calisir. Ozel sunucular (private) icin calismaz.")
+    -- ============================================================
+
     local st = MakeTab("Ayarlar", 11)
 
     local st0 = Section(st, "Acil Durum")
